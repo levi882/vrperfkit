@@ -20,8 +20,21 @@ namespace vrperfkit {
 		void PostOMSetRenderTargets(UINT numViews, ID3D11RenderTargetView * const *renderTargetViews, ID3D11DepthStencilView *depthStencilView) override;
 
 	private:
+		enum class VRSState {
+			UNKNOWN,
+			DISABLED,
+			COMBINED,
+			ARRAY,
+			LEFT_EYE,
+			RIGHT_EYE,
+		};
+
 		bool nvapiLoaded = false;
 		bool active = false;
+		bool shuttingDown = false;
+		VRSState currentState = VRSState::UNKNOWN;
+		ComPtr<ID3D11NvShadingRateResourceView> currentVRSView;
+		bool currentFavorHorizontal = true;
 
 		int targetWidth = 1000000;
 		int targetHeight = 1000000;
@@ -49,6 +62,7 @@ namespace vrperfkit {
 
 		void EnableVRS();
 		void DisableVRS();
+		void ApplyVRS(VRSState state, ID3D11NvShadingRateResourceView *view);
 
 		void ApplyCombinedVRS(int width, int height);
 		void ApplyArrayVRS(int width, int height);

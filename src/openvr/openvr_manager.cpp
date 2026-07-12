@@ -57,7 +57,7 @@ namespace vrperfkit {
 		ComPtr<ID3D11Device> device;
 		ComPtr<ID3D11DeviceContext> context;
 		ComPtr<ID3D11Texture2D> resolveTexture;
-		ComPtr<ID3D11ShaderResourceView> resolveView;
+		ComPtr<ID3D11ShaderResourceView> resolveView[2];
 		ComPtr<ID3D11Texture2D> outputTexture;
 		ComPtr<ID3D11ShaderResourceView> outputView;
 		ComPtr<ID3D11UnorderedAccessView> outputUav;
@@ -74,17 +74,22 @@ namespace vrperfkit {
 			inputTexture->GetDesc(&td);
 
 			if (requiresResolve) {
+				int arrayIndex = td.ArraySize > 1 ? eye : 0;
+				UINT sourceSubresource = D3D11CalcSubresource(0, arrayIndex, td.MipLevels);
+				UINT destinationSubresource = D3D11CalcSubresource(0, arrayIndex, 1);
 				if (td.SampleDesc.Count > 1) {
-					context->ResolveSubresource(resolveTexture.Get(), 0, inputTexture, 0, td.Format);
+					context->ResolveSubresource(resolveTexture.Get(), destinationSubresource,
+						inputTexture, sourceSubresource, td.Format);
 				} else {
 					D3D11_BOX region;
 					region.left = region.top = region.front = 0;
 					region.right = td.Width;
 					region.bottom = td.Height;
 					region.back = 1;
-					context->CopySubresourceRegion(resolveTexture.Get(), 0, 0, 0, 0, inputTexture, 0, &region);
+					context->CopySubresourceRegion(resolveTexture.Get(), destinationSubresource,
+						0, 0, 0, inputTexture, sourceSubresource, &region);
 				}
-				return resolveView.Get();
+				return resolveView[arrayIndex].Get();
 			}
 
 			if (inputViews.find(inputTexture) == inputViews.end()) {
@@ -286,7 +291,13 @@ namespace vrperfkit {
 		if (d3d11Res->requiresResolve) {
 			LOG_INFO << "Input texture can't be bound directly, need to resolve";
 			d3d11Res->resolveTexture = CreateResolveTexture(d3d11Res->device.Get(), tex, MakeSrgbFormatsTypeless(td.Format));
-			d3d11Res->resolveView = CreateShaderResourceView(d3d11Res->device.Get(), d3d11Res->resolveTexture.Get());
+			d3d11Res->resolveView[0] = CreateShaderResourceView(d3d11Res->device.Get(), d3d11Res->resolveTexture.Get());
+			if (td.ArraySize > 1) {
+				d3d11Res->resolveView[1] = CreateShaderResourceView(d3d11Res->device.Get(), d3d11Res->resolveTexture.Get(), 1);
+			}
+			else {
+				d3d11Res->resolveView[1] = d3d11Res->resolveView[0];
+			}
 		}
 
 		uint32_t outputWidth = td.Width, outputHeight = td.Height;
@@ -420,7 +431,7 @@ namespace vrperfkit {
 			PrepareOutputTexInfo(info.texture, info.submitFlags);
 			outputTexInfo->handle = d3d11Res->outputTexture.Get();
 			outputTexInfo->eColorSpace = inputIsSrgb ? ColorSpace_Gamma : ColorSpace_Auto;
-			info.texture = outputTexInfo.get();
+			info.texture = outputTexInfo;
 		}
 
 		float projLX = isFlippedX ? 1.f - projCenters.eyeCenter[0].x : projCenters.eyeCenter[0].x;
@@ -474,25 +485,22 @@ namespace vrperfkit {
 		if (create.arrayLayers > 1) {
 			info.submitFlags = Submit_VulkanTextureWithArrayData;
 		}
-		info.texture = outputTexInfo.get();
+		info.texture = outputTexInfo;
 	}
 
 	void OpenVrManager::PrepareOutputTexInfo(const Texture_t *input, EVRSubmitFlags submitFlags) {
+		outputTexInfo = reinterpret_cast<Texture_t*>(&outputTexInfoStorage);
 		if ((submitFlags & Submit_TextureWithDepth) && (submitFlags & Submit_TextureWithPose)) {
-			outputTexInfo.reset(new VRTextureWithPoseAndDepth_t);
-			memcpy(outputTexInfo.get(), input, sizeof(VRTextureWithPoseAndDepth_t));
+			memcpy(outputTexInfo, input, sizeof(VRTextureWithPoseAndDepth_t));
 		}
 		else if (submitFlags & Submit_TextureWithDepth) {
-			outputTexInfo.reset(new VRTextureWithDepth_t);
-			memcpy(outputTexInfo.get(), input, sizeof(VRTextureWithDepth_t));
+			memcpy(outputTexInfo, input, sizeof(VRTextureWithDepth_t));
 		}
 		else if (submitFlags & Submit_TextureWithPose) {
-			outputTexInfo.reset(new VRTextureWithPose_t);
-			memcpy(outputTexInfo.get(), input, sizeof(VRTextureWithPose_t));
+			memcpy(outputTexInfo, input, sizeof(VRTextureWithPose_t));
 		}
 		else {
-			outputTexInfo.reset(new Texture_t);
-			memcpy(outputTexInfo.get(), input, sizeof(Texture_t));
+			memcpy(outputTexInfo, input, sizeof(Texture_t));
 		}
 	}
 }

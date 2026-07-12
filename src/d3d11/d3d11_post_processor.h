@@ -53,12 +53,16 @@ namespace vrperfkit {
 		};
 		static const int QUERY_COUNT = 6;
 		ProfileQuery profileQueries[QUERY_COUNT];
-		int currentQuery = 0;
+		int writeQuery = 0;
+		int readQuery = 0;
+		int pendingQueries = 0;
+		bool profileSampleActive = false;
 		float summedGpuTime = 0.0f;
 		int countedQueries = 0;
 
 		void CreateProfileQueries();
 		void StartProfiling();
 		void EndProfiling();
+		void CollectProfilingResults();
 	};
 }

@@ -190,14 +190,7 @@ namespace vrperfkit {
 			return;
 
 		SetupCombinedVRS(width, height, proj[0][0], proj[0][1], proj[1][0], proj[1][1] );
-		NvAPI_Status status = NvAPI_D3D11_RSSetShadingRateResourceView( context.Get(), combinedVRSView.Get() );
-		if (status != NVAPI_OK) {
-			LOG_ERROR << "Error while setting shading rate resource view: " << status;
-			Shutdown();
-			return;
-		}
-
-		EnableVRS();
+		ApplyVRS(VRSState::COMBINED, combinedVRSView.Get());
 	}
 
 	void D3D11VariableRateShading::ApplyArrayVRS(int width, int height) {
@@ -205,14 +198,7 @@ namespace vrperfkit {
 			return;
 
 		SetupArrayVRS( width, height, proj[0][0], proj[0][1], proj[1][0], proj[1][1] );
-		NvAPI_Status status = NvAPI_D3D11_RSSetShadingRateResourceView( context.Get(), arrayVRSView.Get() );
-		if (status != NVAPI_OK) {
-			LOG_ERROR << "Error while setting shading rate resource view: " << status;
-			Shutdown();
-			return;
-		}
-
-		EnableVRS();
+		ApplyVRS(VRSState::ARRAY, arrayVRSView.Get());
 	}
 
 	void D3D11VariableRateShading::ApplySingleEyeVRS(int eye, int width, int height) {
@@ -220,18 +206,43 @@ namespace vrperfkit {
 			return;
 
 		SetupSingleEyeVRS( eye, width, height, proj[eye][0], proj[eye][1] );
-		NvAPI_Status status = NvAPI_D3D11_RSSetShadingRateResourceView( context.Get(), singleEyeVRSView[eye].Get() );
-		if (status != NVAPI_OK) {
-			LOG_ERROR << "Error while setting shading rate resource view: " << status;
-			Shutdown();
+		ApplyVRS(eye == LEFT_EYE ? VRSState::LEFT_EYE : VRSState::RIGHT_EYE, singleEyeVRSView[eye].Get());
+	}
+
+	void D3D11VariableRateShading::ApplyVRS(VRSState state, ID3D11NvShadingRateResourceView *view) {
+		if (!active || view == nullptr) {
 			return;
 		}
 
-		EnableVRS();
+		bool viewChanged = currentVRSView.Get() != view;
+		bool needsEnable = currentState == VRSState::UNKNOWN
+			|| currentState == VRSState::DISABLED
+			|| currentFavorHorizontal != g_config.ffr.favorHorizontal;
+
+		if (viewChanged) {
+			NvAPI_Status status = NvAPI_D3D11_RSSetShadingRateResourceView( context.Get(), view );
+			if (status != NVAPI_OK) {
+				LOG_ERROR << "Error while setting shading rate resource view: " << status;
+				Shutdown();
+				return;
+			}
+		}
+
+		if (needsEnable) {
+			EnableVRS();
+			if (!active) {
+				return;
+			}
+		}
+
+		if (viewChanged) {
+			currentVRSView = view;
+		}
+		currentState = state;
 	}
 
 	void D3D11VariableRateShading::DisableVRS() {
-		if (!active)
+		if (!active || currentState == VRSState::DISABLED)
 			return;
 
 		NV_D3D11_VIEWPORT_SHADING_RATE_DESC vsrd[2];
@@ -246,11 +257,20 @@ namespace vrperfkit {
 		NvAPI_Status status = NvAPI_D3D11_RSSetViewportsPixelShadingRates( context.Get(), &srd );
 		if (status != NVAPI_OK) {
 			LOG_ERROR << "Error while setting shading rates: " << status;
+			active = false;
 			Shutdown();
+		}
+		else {
+			currentState = VRSState::DISABLED;
 		}
 	}
 
 	void D3D11VariableRateShading::Shutdown() {
+		if (shuttingDown) {
+			return;
+		}
+		shuttingDown = true;
+
 		DisableVRS();
 
 		if (nvapiLoaded) {
@@ -258,6 +278,8 @@ namespace vrperfkit {
 		}
 		nvapiLoaded = false;
 		active = false;
+		currentState = VRSState::UNKNOWN;
+		currentVRSView.Reset();
 		for (int i = 0; i < 2; ++i) {
 			singleEyeVRSTex[i].Reset();
 			singleEyeVRSView[i].Reset();
@@ -268,6 +290,7 @@ namespace vrperfkit {
 		arrayVRSView.Reset();
 		device.Reset();
 		context.Reset();
+		shuttingDown = false;
 	}
 
 	void D3D11VariableRateShading::EnableVRS() {
@@ -288,6 +311,9 @@ namespace vrperfkit {
 		if (status != NVAPI_OK) {
 			LOG_ERROR << "Error while setting shading rates: " << status;
 			Shutdown();
+		}
+		else {
+			currentFavorHorizontal = g_config.ffr.favorHorizontal;
 		}
 	}
 

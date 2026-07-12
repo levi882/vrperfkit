@@ -171,36 +171,67 @@ namespace vrperfkit {
 			CreateProfileQueries();
 		}
 
-		context->Begin(profileQueries[currentQuery].queryDisjoint.Get());
-		context->End(profileQueries[currentQuery].queryStart.Get());
+		CollectProfilingResults();
+		profileSampleActive = pendingQueries < QUERY_COUNT;
+		if (!profileSampleActive) {
+			return;
+		}
+
+		context->Begin(profileQueries[writeQuery].queryDisjoint.Get());
+		context->End(profileQueries[writeQuery].queryStart.Get());
 	}
 
 	void D3D11PostProcessor::EndProfiling() {
-		context->End(profileQueries[currentQuery].queryEnd.Get());
-		context->End(profileQueries[currentQuery].queryDisjoint.Get());
-
-		currentQuery = (currentQuery + 1) % QUERY_COUNT;
-		while (context->GetData(profileQueries[currentQuery].queryDisjoint.Get(), nullptr, 0, 0) == S_FALSE) {
-			Sleep(1);
+		if (profileSampleActive) {
+			context->End(profileQueries[writeQuery].queryEnd.Get());
+			context->End(profileQueries[writeQuery].queryDisjoint.Get());
+			writeQuery = (writeQuery + 1) % QUERY_COUNT;
+			++pendingQueries;
+			profileSampleActive = false;
 		}
-		D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint;
-		HRESULT result = context->GetData(profileQueries[currentQuery].queryDisjoint.Get(), &disjoint, sizeof(disjoint), 0);
-		if (result == S_OK && !disjoint.Disjoint) {
-			UINT64 begin, end;
-			context->GetData(profileQueries[currentQuery].queryStart.Get(), &begin, sizeof(UINT64), 0);
-			context->GetData(profileQueries[currentQuery].queryEnd.Get(), &end, sizeof(UINT64), 0);
-			float duration = (end - begin) / float(disjoint.Frequency);
-			summedGpuTime += duration;
-			++countedQueries;
 
-			if (countedQueries >= 500) {
-				float avgTimeMs = 1000.f / countedQueries * summedGpuTime;
-				// queries are done per eye, but we want the average for both eyes per frame
-				avgTimeMs *= 2;
-				LOG_INFO << "Average GPU processing time for post-processing: " << avgTimeMs << " ms";
-				countedQueries = 0;
-				summedGpuTime = 0.f;
+		CollectProfilingResults();
+	}
+
+	void D3D11PostProcessor::CollectProfilingResults() {
+		while (pendingQueries > 0) {
+			ProfileQuery &profileQuery = profileQueries[readQuery];
+			D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint;
+			HRESULT result = context->GetData(profileQuery.queryDisjoint.Get(), &disjoint, sizeof(disjoint), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+			if (result == S_FALSE) {
+				return;
 			}
+
+			UINT64 begin = 0;
+			UINT64 end = 0;
+			if (result == S_OK && !disjoint.Disjoint) {
+				HRESULT beginResult = context->GetData(profileQuery.queryStart.Get(), &begin, sizeof(UINT64), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+				HRESULT endResult = context->GetData(profileQuery.queryEnd.Get(), &end, sizeof(UINT64), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+				if (beginResult == S_FALSE || endResult == S_FALSE) {
+					return;
+				}
+				if (beginResult != S_OK || endResult != S_OK) {
+					result = E_FAIL;
+				}
+			}
+
+			if (result == S_OK && !disjoint.Disjoint) {
+				float duration = (end - begin) / float(disjoint.Frequency);
+				summedGpuTime += duration;
+				++countedQueries;
+
+				if (countedQueries >= 500) {
+					float avgTimeMs = 1000.f / countedQueries * summedGpuTime;
+					// queries are done per eye, but we want the average for both eyes per frame
+					avgTimeMs *= 2;
+					LOG_INFO << "Average GPU processing time for post-processing: " << avgTimeMs << " ms";
+					countedQueries = 0;
+					summedGpuTime = 0.f;
+				}
+			}
+
+			readQuery = (readQuery + 1) % QUERY_COUNT;
+			--pendingQueries;
 		}
 	}
 }

@@ -38,7 +38,8 @@ namespace vrperfkit {
 		ProjectionCenters projCenters;
 		float aspectRatio;
 		vr::VRTextureBounds_t outputBounds;
-		std::unique_ptr<vr::Texture_t> outputTexInfo;
+		vr::VRTextureWithPoseAndDepth_t outputTexInfoStorage;
+		vr::Texture_t *outputTexInfo = nullptr;
 
 		std::unique_ptr<OpenVrD3D11Resources> d3d11Res;
 		std::unique_ptr<OpenVrDxvkResources> dxvkRes;

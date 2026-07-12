@@ -114,10 +114,17 @@ namespace vrperfkit {
 		failed = false;
 		graphicsApi = GraphicsApi::UNKNOWN;
 		d3d11Res.reset();
+
+		ovrTextureSwapChain leftOutputChain = outputEyeChains[0];
+		ovrTextureSwapChain rightOutputChain = outputEyeChains[1];
+		if (leftOutputChain != nullptr) {
+			ovr_DestroyTextureSwapChain(session, leftOutputChain);
+		}
+		if (rightOutputChain != nullptr && rightOutputChain != leftOutputChain) {
+			ovr_DestroyTextureSwapChain(session, rightOutputChain);
+		}
+
 		for (int i = 0; i < 2; ++i) {
-			if (outputEyeChains[i] != nullptr) {
-				ovr_DestroyTextureSwapChain(session, outputEyeChains[i]);
-			}
 			submittedEyeChains[i] = nullptr;
 			outputEyeChains[i] = nullptr;
 		}
